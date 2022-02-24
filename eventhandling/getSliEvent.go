@@ -1,21 +1,24 @@
 package eventhandling
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"log"
 	"math"
 	"net/url"
 	"strings"
 
+	"gopkg.in/yaml.v2"
+
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"github.com/keptn-contrib/prometheus-service/utils"
 	keptnv2 "github.com/keptn/go-utils/pkg/lib/v0_2_0"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+
+	"github.com/keptn-contrib/prometheus-service/utils"
 )
 
 // GetSliEventHandler is responsible for processing configure monitoring events
@@ -58,11 +61,13 @@ func (eh GetSliEventHandler) HandleEvent() error {
 	// 2: try to fetch metrics into sliResults
 	if sliResults, err = retrieveMetrics(eventData, eh.keptnHandler); err != nil {
 		// failed to fetch metrics, send a finished event with the error
-		_, err = eh.keptnHandler.SendTaskFinishedEvent(&keptnv2.EventData{
-			Status:  keptnv2.StatusErrored,
-			Result:  keptnv2.ResultFailed,
-			Message: err.Error(),
-		}, utils.ServiceName)
+		_, err = eh.keptnHandler.SendTaskFinishedEvent(
+			&keptnv2.EventData{
+				Status:  keptnv2.StatusErrored,
+				Result:  keptnv2.ResultFailed,
+				Message: err.Error(),
+			}, utils.ServiceName,
+		)
 
 		return err
 	}
@@ -92,7 +97,9 @@ func (eh GetSliEventHandler) HandleEvent() error {
 	return nil
 }
 
-func retrieveMetrics(eventData *keptnv2.GetSLITriggeredEventData, keptnHandler *keptnv2.Keptn) ([]*keptnv2.SLIResult, error) {
+func retrieveMetrics(
+	eventData *keptnv2.GetSLITriggeredEventData, keptnHandler *keptnv2.Keptn,
+) ([]*keptnv2.SLIResult, error) {
 	log.Printf("Retrieving Prometheus metrics")
 
 	clusterConfig, err := rest.InClusterConfig()
@@ -140,31 +147,39 @@ func retrieveMetrics(eventData *keptnv2.GetSLITriggeredEventData, keptnHandler *
 		log.Println("retrieveMetrics: Fetching indicator: " + indicator)
 		sliValue, err := prometheusHandler.GetSLIValue(indicator, eventData.GetSLI.Start, eventData.GetSLI.End)
 		if err != nil {
-			sliResults = append(sliResults, &keptnv2.SLIResult{
-				Metric:  indicator,
-				Value:   0,
-				Success: false,
-				Message: err.Error(),
-			})
+			sliResults = append(
+				sliResults, &keptnv2.SLIResult{
+					Metric:  indicator,
+					Value:   0,
+					Success: false,
+					Message: err.Error(),
+				},
+			)
 		} else if math.IsNaN(sliValue) {
-			sliResults = append(sliResults, &keptnv2.SLIResult{
-				Metric:  indicator,
-				Value:   0,
-				Success: false,
-				Message: "SLI value is NaN",
-			})
+			sliResults = append(
+				sliResults, &keptnv2.SLIResult{
+					Metric:  indicator,
+					Value:   0,
+					Success: false,
+					Message: "SLI value is NaN",
+				},
+			)
 		} else {
-			sliResults = append(sliResults, &keptnv2.SLIResult{
-				Metric:  indicator,
-				Value:   sliValue,
-				Success: true,
-			})
+			sliResults = append(
+				sliResults, &keptnv2.SLIResult{
+					Metric:  indicator,
+					Value:   sliValue,
+					Success: true,
+				},
+			)
 		}
 	}
 	return sliResults, nil
 }
 
-func getCustomQueries(keptnHandler *keptnv2.Keptn, project string, stage string, service string) (map[string]string, error) {
+func getCustomQueries(
+	keptnHandler *keptnv2.Keptn, project string, stage string, service string,
+) (map[string]string, error) {
 	log.Println("Checking for custom SLI queries")
 
 	customQueries, err := keptnHandler.GetSLIConfiguration(project, stage, service, utils.SliResourceURI)
@@ -178,7 +193,10 @@ func getCustomQueries(keptnHandler *keptnv2.Keptn, project string, stage string,
 // getPrometheusAPIURL fetches the prometheus API URL for the provided project (e.g., from Kubernetes configmap)
 func getPrometheusAPIURL(project string, kubeClient v1.CoreV1Interface) (string, error) {
 	log.Println("Checking if external prometheus instance has been defined for project " + project)
-	secret, err := kubeClient.Secrets(env.PodNamespace).Get("prometheus-credentials-"+project, metav1.GetOptions{})
+	secret, err := kubeClient.Secrets(env.PodNamespace).Get(
+		context.TODO(), "prometheus-credentials-"+project,
+		metav1.GetOptions{},
+	)
 
 	// return cluster-internal prometheus URL if no secret has been found
 	if err != nil {

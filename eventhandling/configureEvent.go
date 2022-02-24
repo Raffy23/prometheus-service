@@ -1,6 +1,7 @@
 package eventhandling
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -20,8 +21,7 @@ import (
 	keptnv2 "github.com/keptn/go-utils/pkg/lib/v0_2_0"
 	prometheus_model "github.com/prometheus/common/model"
 	prometheusconfig "github.com/prometheus/prometheus/config"
-	prometheus_sd_config "github.com/prometheus/prometheus/discovery/config"
-	"github.com/prometheus/prometheus/discovery/targetgroup"
+	prometheus_sd "github.com/prometheus/prometheus/discovery"
 )
 
 const Throughput = "throughput"
@@ -84,7 +84,9 @@ func (eh ConfigureMonitoringEventHandler) HandleEvent() error {
 		return eh.handleError(err.Error())
 	}
 
-	if err = eh.sendConfigureMonitoringFinishedEvent(keptnv2.StatusSucceeded, keptnv2.ResultPass, "Prometheus successfully configured and rule created"); err != nil {
+	if err = eh.sendConfigureMonitoringFinishedEvent(
+		keptnv2.StatusSucceeded, keptnv2.ResultPass, "Prometheus successfully configured and rule created",
+	); err != nil {
 		eh.logger.Error(err.Error())
 	}
 	return nil
@@ -146,13 +148,22 @@ func (eh ConfigureMonitoringEventHandler) configurePrometheusAlertManager() erro
 	prometheusHelper, err := utils.NewPrometheusHelper()
 
 	eh.logger.Info("Updating Prometheus AlertManager configmap...")
-	err = prometheusHelper.UpdateAMConfigMap(env.AlertManagerConfigMap, env.AlertManagerConfigFileName, env.AlertManagerNamespace)
+	err = prometheusHelper.UpdateAMConfigMap(
+		env.AlertManagerConfigMap, env.AlertManagerConfigFileName, env.AlertManagerNamespace,
+	)
 	if err != nil {
 		return err
 	}
 
 	eh.logger.Info("Prometheus AlertManager configuration successfully")
 
+	return nil
+}
+
+// TODO: this is now needed when loading a prometheus config file, maybe we should wrap a keptnLogger ?
+type NopPrometheusLogger struct{}
+
+func (pl *NopPrometheusLogger) Log(_ ...interface{}) error {
 	return nil
 }
 
@@ -168,11 +179,17 @@ func (eh ConfigureMonitoringEventHandler) updatePrometheusConfigMap(eventData ke
 		return err
 	}
 
-	cmPrometheus, err := api.CoreV1().ConfigMaps(env.PrometheusNamespace).Get(env.PrometheusConfigMap, metav1.GetOptions{})
+	cmPrometheus, err := api.CoreV1().ConfigMaps(env.PrometheusNamespace).Get(
+		context.TODO(),
+		env.PrometheusConfigMap, metav1.GetOptions{},
+	)
 	if err != nil {
 		return err
 	}
-	config, err := prometheusconfig.Load(cmPrometheus.Data[env.PrometheusConfigFileName])
+
+	config, err := prometheusconfig.Load(
+		cmPrometheus.Data[env.PrometheusConfigFileName], false, new(NopPrometheusLogger),
+	)
 	if err != nil {
 		return err
 	}
@@ -198,8 +215,10 @@ func (eh ConfigureMonitoringEventHandler) updatePrometheusConfigMap(eventData ke
 		// <service>.<project>-<stage>
 		createScrapeJobConfig(scrapeConfig, config, eventData.Project, stage.Name, eventData.Service, false, false)
 
-		alertingRulesConfig, err = eh.createPrometheusAlertsIfSLOsAndRemediationDefined(eventData, stage,
-			alertingRulesConfig)
+		alertingRulesConfig, err = eh.createPrometheusAlertsIfSLOsAndRemediationDefined(
+			eventData, stage,
+			alertingRulesConfig,
+		)
 
 		if err != nil {
 			return fmt.Errorf("error configuring prometheus alerts: %w", err)
@@ -212,7 +231,9 @@ func (eh ConfigureMonitoringEventHandler) updatePrometheusConfigMap(eventData ke
 	// apply
 	cmPrometheus.Data["alerting_rules.yml"] = string(alertingRulesYAMLString)
 	cmPrometheus.Data[env.PrometheusConfigFileName] = config.String()
-	_, err = api.CoreV1().ConfigMaps(env.PrometheusNamespace).Update(cmPrometheus)
+	_, err = api.CoreV1().ConfigMaps(env.PrometheusNamespace).Update(
+		context.TODO(), cmPrometheus, metav1.UpdateOptions{},
+	)
 	if err != nil {
 		return err
 	}
@@ -230,19 +251,25 @@ func (eh ConfigureMonitoringEventHandler) createPrometheusAlertsIfSLOsAndRemedia
 	}
 
 	const remediationFileDefaultName = "remediation.yaml"
-	_, err = eh.keptnHandler.ResourceHandler.GetServiceResource(eventData.Project, stage.Name, eventData.Service,
-		remediationFileDefaultName)
+	_, err = eh.keptnHandler.ResourceHandler.GetServiceResource(
+		eventData.Project, stage.Name, eventData.Service,
+		remediationFileDefaultName,
+	)
 
 	if errors.Is(err, configutils.ResourceNotFoundError) {
-		eh.logger.Infof("No remediation defined for project %s stage %s, skipping setup of prometheus alerts",
-			eventData.Project, stage.Name)
+		eh.logger.Infof(
+			"No remediation defined for project %s stage %s, skipping setup of prometheus alerts",
+			eventData.Project, stage.Name,
+		)
 		return alertingRulesConfig, nil
 	}
 
 	if err != nil {
 		return alertingRulesConfig,
-			fmt.Errorf("error retrieving remediation definition %s for project %s and stage %s: %w",
-				remediationFileDefaultName, eventData.Project, stage.Name, err)
+			fmt.Errorf(
+				"error retrieving remediation definition %s for project %s and stage %s: %w",
+				remediationFileDefaultName, eventData.Project, stage.Name, err,
+			)
 	}
 
 	// Create or update alerting group
@@ -342,7 +369,10 @@ func (eh ConfigureMonitoringEventHandler) createPrometheusAlertsIfSLOsAndRemedia
 	return alertingRulesConfig, nil
 }
 
-func createScrapeJobConfig(scrapeConfig *prometheusconfig.ScrapeConfig, config *prometheusconfig.Config, project string, stage string, service string, isCanary bool, isPrimary bool) {
+func createScrapeJobConfig(
+	scrapeConfig *prometheusconfig.ScrapeConfig, config *prometheusconfig.Config, project string, stage string,
+	service string, isCanary bool, isPrimary bool,
+) {
 	scrapeConfigName := service + "-" + project + "-" + stage
 	var scrapeEndpoint string
 	if isCanary {
@@ -369,8 +399,8 @@ func createScrapeJobConfig(scrapeConfig *prometheusconfig.ScrapeConfig, config *
 	scrapeConfig.ScrapeTimeout = prometheus_model.Duration(3 * time.Second)
 	// configure metrics path (default: /metrics)
 	scrapeConfig.MetricsPath = utils.EnvVarOrDefault(metricsScrapePathEnvName, "/metrics")
-	scrapeConfig.ServiceDiscoveryConfig = prometheus_sd_config.ServiceDiscoveryConfig{
-		StaticConfigs: []*targetgroup.Group{
+	scrapeConfig.ServiceDiscoveryConfigs = prometheus_sd.Configs{
+		prometheus_sd.StaticConfig{
 			{
 				Targets: []prometheus_model.LabelSet{
 					{prometheus_model.AddressLabel: prometheus_model.LabelValue(scrapeEndpoint)},
@@ -411,7 +441,9 @@ func getConfigurationServiceURL() string {
 	return env.ConfigurationServiceURL
 }
 
-func retrieveSLOs(eventData keptnevents.ConfigureMonitoringEventData, stage string, logger keptn.LoggerInterface) (*keptnevents.ServiceLevelObjectives, error) {
+func retrieveSLOs(
+	eventData keptnevents.ConfigureMonitoringEventData, stage string, logger keptn.LoggerInterface,
+) (*keptnevents.ServiceLevelObjectives, error) {
 	resourceHandler := configutils.NewResourceHandler(getConfigurationServiceURL())
 
 	resource, err := resourceHandler.GetServiceResource(eventData.Project, stage, eventData.Service, "slo.yaml")
@@ -429,22 +461,29 @@ func retrieveSLOs(eventData keptnevents.ConfigureMonitoringEventData, stage stri
 	return &slos, nil
 }
 
-func (eh ConfigureMonitoringEventHandler) sendConfigureMonitoringFinishedEvent(status keptnv2.StatusType, result keptnv2.ResultType, msg string) error {
-	_, err := eh.keptnHandler.SendTaskFinishedEvent(&keptnv2.EventData{
-		Status:  status,
-		Result:  result,
-		Message: msg,
-	}, utils.ServiceName)
+func (eh ConfigureMonitoringEventHandler) sendConfigureMonitoringFinishedEvent(
+	status keptnv2.StatusType, result keptnv2.ResultType, msg string,
+) error {
+	_, err := eh.keptnHandler.SendTaskFinishedEvent(
+		&keptnv2.EventData{
+			Status:  status,
+			Result:  result,
+			Message: msg,
+		}, utils.ServiceName,
+	)
 
 	if err != nil {
-		return fmt.Errorf("could not send %s event: %s", keptnv2.GetFinishedEventType(keptnv2.ConfigureMonitoringTaskName), err.Error())
+		return fmt.Errorf(
+			"could not send %s event: %s", keptnv2.GetFinishedEventType(keptnv2.ConfigureMonitoringTaskName),
+			err.Error(),
+		)
 	}
 
 	return nil
 }
 
 func (eh ConfigureMonitoringEventHandler) handleError(msg string) error {
-	//logger.Error(msg)
+	// logger.Error(msg)
 	if err := eh.sendConfigureMonitoringFinishedEvent(keptnv2.StatusErrored, keptnv2.ResultFailed, msg); err != nil {
 		// an additional error occurred when trying to send configure monitoring finished back to Keptn
 		eh.logger.Error(err.Error())

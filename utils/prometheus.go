@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -99,7 +100,7 @@ func NewPrometheusHelper() (*PrometheusHelper, error) {
 }
 
 func (p *PrometheusHelper) UpdateConfigMap(cm *v1.ConfigMap, namespace string) error {
-	_, err := p.KubeApi.CoreV1().ConfigMaps(namespace).Update(cm)
+	_, err := p.KubeApi.CoreV1().ConfigMaps(namespace).Update(context.TODO(), cm, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
@@ -108,11 +109,11 @@ func (p *PrometheusHelper) UpdateConfigMap(cm *v1.ConfigMap, namespace string) e
 }
 
 func (p *PrometheusHelper) GetConfigMap(name string, namespace string) (*v1.ConfigMap, error) {
-	return p.KubeApi.CoreV1().ConfigMaps(namespace).Get(name, metav1.GetOptions{})
+	return p.KubeApi.CoreV1().ConfigMaps(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 }
 
 func (p *PrometheusHelper) CreateConfigMap(cm *v1.ConfigMap, namespace string) error {
-	_, err := p.KubeApi.CoreV1().ConfigMaps(namespace).Create(cm)
+	_, err := p.KubeApi.CoreV1().ConfigMaps(namespace).Create(context.TODO(), cm, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -164,7 +165,10 @@ func (p *PrometheusHelper) UpdateAMConfigMap(name string, filename string, names
 }
 
 // NewPrometheusHandler returns a new prometheus handler that interacts with the Prometheus REST API
-func NewPrometheusHandler(apiURL string, eventData *keptnv2.EventData, deploymentType string, labels map[string]string, customFilters []*keptnv2.SLIFilter) *Handler {
+func NewPrometheusHandler(
+	apiURL string, eventData *keptnv2.EventData, deploymentType string, labels map[string]string,
+	customFilters []*keptnv2.SLIFilter,
+) *Handler {
 	ph := &Handler{
 		ApiURL:         apiURL,
 		Project:        eventData.Project,
@@ -195,8 +199,14 @@ func (ph *Handler) GetSLIValue(metric string, start string, end string) (float64
 	if err != nil {
 		return 0, err
 	}
-	queryString := ph.ApiURL + "/api/v1/query?query=" + url.QueryEscape(query) + "&time=" + strconv.FormatInt(endUnix.Unix(), 10)
-	log.Println("GetSLIValue: Generated query: /api/v1/query?query=" + query + "&time=" + strconv.FormatInt(endUnix.Unix(), 10))
+	queryString := ph.ApiURL + "/api/v1/query?query=" + url.QueryEscape(query) + "&time=" + strconv.FormatInt(
+		endUnix.Unix(), 10,
+	)
+	log.Println(
+		"GetSLIValue: Generated query: /api/v1/query?query=" + query + "&time=" + strconv.FormatInt(
+			endUnix.Unix(), 10,
+		),
+	)
 
 	req, err := http.NewRequest("GET", queryString, nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -420,7 +430,9 @@ func (ph *Handler) getDefaultFilterExpression() string {
 			key: handler
 			value: ItemsController
 			*/
-			if !strings.HasPrefix(filter.Value, "=") && !strings.HasPrefix(filter.Value, "!=") && !strings.HasPrefix(filter.Value, "=~") && !strings.HasPrefix(filter.Value, "!~") {
+			if !strings.HasPrefix(filter.Value, "=") && !strings.HasPrefix(
+				filter.Value, "!=",
+			) && !strings.HasPrefix(filter.Value, "=~") && !strings.HasPrefix(filter.Value, "!~") {
 				filter.Value = strings.Replace(filter.Value, "'", "", -1)
 				filter.Value = strings.Replace(filter.Value, "\"", "", -1)
 				if filterExpression != "" {
