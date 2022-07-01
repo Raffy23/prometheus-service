@@ -1,2 +1,2 @@
-DOCKER_ORGANIZATION="keptncontrib"
+DOCKER_ORGANIZATION="raffy23"
 IMAGE="prometheus-service"
